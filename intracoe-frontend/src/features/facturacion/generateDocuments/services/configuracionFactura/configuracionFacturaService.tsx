@@ -21,6 +21,15 @@ export const getAllCondicionDeOperacion = async () => {
   }
 }
 
+export const getCondicionDeOperacionById = async (id:number) =>{
+  try {
+    const response = await axios.get(`${BASEURL}/condicion-operacion/${id}/`);
+    return response.data
+  } catch (error) {
+    throw new Error()
+  }
+}
+
 export const getAllModelosDeFacturacion = async () => {
   try {
     const response = await axios.get(`${BASEURL}/modelo-facturacion/`);
@@ -36,5 +45,14 @@ export const getAllTipoTransmision = async () => {
     return response.data
   } catch (error) {
     throw new Error()
+  }
+}
+
+export const getAllMetodosDePago = async () =>{
+  try {
+    const response = await axios.get(`${BASEURL}/formas-pago/`);
+    return response.data
+  } catch (error) {
+    console.log(error)
   }
 }
