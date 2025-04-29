@@ -12,9 +12,13 @@ export const generarFacturaService = async (data: any) => {
   }
 };
 
-export const generarAjusteService = async () => {
+export const generarAjusteService = async (tipo_dte: string) => {
   try {
-    const response = await api.get(`/factura_ajuste/generar/`);
+    const response = await api.get(`/factura_ajuste/generar/`, {
+      params: {
+        tipo_dte,
+      },
+    });
     
     return response.data;
   } catch (error:any) {
@@ -82,6 +86,7 @@ export const EnviarHacienda = async (id: string) => {
     const response = await api.post(`/factura/${id}/enviar/`);
     return response;
   } catch (error) {
+    console.log(error)
     throw error;
   }
 };
@@ -102,14 +107,12 @@ export const getFacturaBycodigo = async (codigo_generacion: string) => {
   }
 };
 
-export const enviarFactura = async (id: any) => {
-
-  console.log("@@@@@@@@@@@@@@@@@@@@@@@@",)
+export const enviarFactura = async (id: any, formData:any) => {
   try {
-    const response = await api.post(`/enviar-correo/${id}/`,
-    //   {
-    //   headers: { 'Content-Type': 'multipart/form-data' }
-    // }
+    const response = await api.post(`/enviar-correo/${id}/`, formData,
+      {
+      headers: { 'Content-Type': 'multipart/form-data' }
+    }
   );
     console.log(response.data)
     return response.data;
