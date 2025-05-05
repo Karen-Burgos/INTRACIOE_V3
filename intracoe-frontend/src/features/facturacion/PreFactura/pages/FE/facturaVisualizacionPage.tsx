@@ -36,7 +36,11 @@ import { IoMdCloseCircle } from 'react-icons/io';
 import html2canvas from 'html2canvas';
 import jsPDF from 'jspdf';
 import { usePDF } from 'react-to-pdf';
-import { EnviarHacienda } from '../../../generateDocuments/services/factura/facturaServices';
+import {
+  enviarFactura,
+  EnviarHacienda,
+  FirmarFactura,
+} from '../../../generateDocuments/services/factura/facturaServices';
 import CustomToast, {
   CustomToastRef,
   ToastSeverity,
@@ -45,6 +49,8 @@ import { getCondicionDeOperacionById } from '../../../generateDocuments/services
 
 import JSZip from 'jszip';
 import { saveAs } from 'file-saver';
+import { Dialog } from 'primereact/dialog';
+import LoadingScreen from '../../../../../shared/loading/loadingScreen';
 
 export const FacturaVisualizacionPage = () => {
   let { id } = useParams();
@@ -66,6 +72,12 @@ export const FacturaVisualizacionPage = () => {
   const toastRef = useRef<CustomToastRef>(null);
 
   const [loading, setLoading] = useState(false);
+  const [loadingFirma, setLoadingFirma] = useState(false);
+
+  // arriba, junto a tus otros useState
+  const [firmaIntentos, setFirmaIntentos] = useState(0);
+  const [viewDialog, setViewDiaog] = useState(false);
+  const [enviarHaciendLoading, setEnviarHaciendLoading] = useState(false);
 
   const handleAccion = (
     severity: ToastSeverity,
@@ -80,9 +92,76 @@ export const FacturaVisualizacionPage = () => {
     });
   };
 
+  const generarPdf = async () => {
+    const element = document.getElementById('content-id');
+    if (!element) {
+      throw new Error('El elemento de la factura no se encontró');
+    }
+
+    // 1) Render a canvas
+    const canvas = await html2canvas(element, { useCORS: true, scale: 3 });
+    const imgData = canvas.toDataURL('image/png');
+
+    // 2) Generar el PDF en memoria
+    const pdf = new jsPDF({ orientation: 'portrait', unit: 'px' });
+    const pageWidth = pdf.internal.pageSize.getWidth();
+    const ratio = canvas.height / canvas.width;
+    const imgHeight = pageWidth * ratio;
+    pdf.addImage(imgData, 'PNG', 0, 0, pageWidth, imgHeight);
+
+    // 3) Obtener el Blob del PDF
+    const pdfBlob = pdf.output('blob');
+
+    if (!pdfBlob) {
+      throw new Error('No se pudo generar el PDF');
+    }
+
+    return pdfBlob;
+  };
+
   useEffect(() => {
     fetchDatosFactura();
   }, []);
+
+  useEffect(() => {
+    console.log(json);
+    if (json !== undefined) {
+      if (json != 'OK') {
+        console.log('error');
+        firmar();
+      }
+    }
+  }, [json]);
+
+  const firmar = async () => {
+    setLoadingFirma(true);
+    try {
+      await FirmarFactura(id!);
+      setLoadingFirma(false);
+      handleAccion('success', <FaCircleCheck size={32} />, 'Firma exitosa');
+      setViewDiaog(false);
+    } catch (error) {
+      setLoadingFirma(false);
+      const next = firmaIntentos + 1;
+      setFirmaIntentos(next);
+
+      if (next < 3) {
+        handleAccion(
+          'warn',
+          <IoMdCloseCircle size={32} />,
+          `Error al firmar (Intento ${next}/3). ¿Reintentar?`
+        );
+        setViewDiaog(true);
+      } else {
+        handleAccion(
+          'error',
+          <IoMdCloseCircle size={32} />,
+          'No se pudo firmar tras 3 intentos.'
+        );
+        setViewDiaog(false);
+      }
+    }
+  };
 
   const fetchCondicionOperacionDescripcion = async (id: number) => {
     const response = await getCondicionDeOperacionById(id);
@@ -90,22 +169,56 @@ export const FacturaVisualizacionPage = () => {
   };
 
   const enviarHacienda = async () => {
-    if (id) {
-      try {
-        await EnviarHacienda(id);
-        handleAccion(
-          'success',
-          <FaCircleCheck size={32} />,
-          'La factura fue publicada correctamente'
-        );
-        setInterval(() => navigate(0), 2000);
-      } catch (error) {
-        handleAccion(
-          'error',
-          <IoMdCloseCircle size={38} />,
-          'Ha ocurrido un error al publicar la factura'
-        );
+    if (!id) return;
+    setEnviarHaciendLoading(true);
+    try {
+      await EnviarHacienda(id);
+      handleAccion(
+        'success',
+        <FaCircleCheck size={32} />,
+        'Factura publicada correctamente'
+      );
+      setTimeout(() => window.location.reload(), 2000);
+    } catch (error) {
+      console.error(error);
+      handleAccion(
+        'error',
+        <IoMdCloseCircle size={32} />,
+        'Error al publicar la factura'
+      );
+    } finally {
+      setEnviarHaciendLoading(false);
+    }
+  };
+
+  const enviarEmail = async () => {
+    try {
+      const pdfBlob = await generarPdf(); // Puede lanzar un error si no se genera
+      if (!pdfBlob) {
+        throw new Error('El archivo PDF no se pudo generar');
       }
+
+      const jsonBlob = new Blob([JSON.stringify(json, null, 2)], {
+        type: 'application/json',
+      });
+
+      // Crear FormData para enviar archivos
+      const formData = new FormData();
+      formData.append(
+        'archivo_pdf',
+        pdfBlob,
+        `${datosFactura.codigoGeneracion}.pdf`
+      );
+      formData.append(
+        'archivo_json',
+        jsonBlob,
+        `${datosFactura.numeroControl}.json`
+      );
+
+      console.log('PDF:npm run dev', pdfBlob);
+      await enviarFactura(id, formData);
+    } catch (error) {
+      console.log(error);
     }
   };
 
@@ -113,6 +226,7 @@ export const FacturaVisualizacionPage = () => {
     try {
       if (id) {
         const response = await generarFacturaService(id);
+        console.log(response);
         setEmisor(response.emisor);
         setDatosFactura(response.datosFactura);
         setReceptor(response.receptor);
@@ -121,7 +235,7 @@ export const FacturaVisualizacionPage = () => {
         setExtension(response.extension);
         setPagoEnLetras(response.pagoEnLetras);
         fetchCondicionOperacionDescripcion(response.condicionOpeacion);
-        setJson(response.json);
+        setJson(response.jsonFirmadoStatus);
         setQrCode(
           `https://admin.factura.gob.sv/consultaPublica?ambiente=${response.ambiente}&codGen=${response.datosFactura.codigoGeneracion.toUpperCase()}&fechaEmi=${response.datosFactura.fechaEmision}`
         );
@@ -165,7 +279,6 @@ export const FacturaVisualizacionPage = () => {
     console.log(pdfBlob);
     console.log(jsonBlob);
 
-
     // 6) Genera el ZIP y dispara la descarga
     const zipBlob = await zip.generateAsync({ type: 'blob' });
     saveAs(zipBlob, `factura_${datosFactura.codigoGeneracion}.zip`);
@@ -175,7 +288,7 @@ export const FacturaVisualizacionPage = () => {
   return (
     <>
       <Title text="Factura generada con éxito" />
-
+      {loadingFirma && <LoadingScreen text="Firmando documento..." />}
       <div className="flex justify-center gap-5">
         <button
           onClick={downloadZip}
@@ -212,6 +325,7 @@ export const FacturaVisualizacionPage = () => {
         >
           Realizar otra factura
         </button>
+        <button onClick={enviarEmail}>ENviar email</button>
       </div>
       <div
         id="content-id"
@@ -268,7 +382,38 @@ export const FacturaVisualizacionPage = () => {
           </div>
         </div>
       </div>
+      {enviarHaciendLoading && <LoadingScreen />}
+
       <CustomToast ref={toastRef} />
+      {viewDialog && (
+        <Dialog
+          header="Error al firmar DTE"
+          visible={viewDialog}
+          style={{ width: '40vw' }}
+          onHide={() => setViewDiaog(false)}
+        >
+          <div className="flex flex-col items-center gap-4">
+            <p className="m-0">
+              {`Intento ${firmaIntentos}/3 fallido. ¿Deseas reintentar?`}
+            </p>
+            <div className="flex gap-4 pt-2">
+              <button
+                onClick={firmar}
+                className="bg-primary-blue rounded px-6 py-2 text-white"
+                disabled={loadingFirma}
+              >
+                {loadingFirma ? 'Cargando...' : 'Reintentar'}
+              </button>
+              <button
+                onClick={() => setViewDiaog(false)}
+                className="border-primary-blue text-primary-blue rounded border px-6 py-2"
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </Dialog>
+      )}
     </>
   );
 };

@@ -4,7 +4,7 @@ import { TableListadoFacturasContainerProps } from '../../../../shared/interface
 import { Paginator } from 'primereact/paginator';
 
 import { RiBillLine } from 'react-icons/ri';
-import { FaCheck } from 'react-icons/fa6';
+import { FaCheck, FaCircleCheck } from 'react-icons/fa6';
 import { BsHourglassSplit } from 'react-icons/bs';
 import { AiFillSignature } from 'react-icons/ai';
 import { FcCancel } from 'react-icons/fc';
@@ -12,11 +12,36 @@ import { FcCancel } from 'react-icons/fc';
 import { invalidarDte } from '../services/listadoFacturasServices';
 import { useNavigate } from 'react-router';
 import { Tooltip } from 'antd';
+import CustomToast, {
+  CustomToastRef,
+  ToastSeverity,
+} from '../../../../shared/toast/customToast';
+import { useEffect, useRef, useState } from 'react';
+import { IoMdCloseCircle } from 'react-icons/io';
+import LoadingScreen from '../../../../shared/loading/loadingScreen';
 
 export const TableListadoFacturasContainer: React.FC<
   TableListadoFacturasContainerProps
-> = ({ data, pagination, onPageChange }) => {
+> = ({ data, pagination, onPageChange, updateFacturas }) => {
+  const [loading, setLoading] = useState(false);
+  const toastRef = useRef<CustomToastRef>(null);
   const navigate = useNavigate();
+
+  useEffect(() => {
+    console.log(data);
+  }, [data]);
+  const handleAccion = (
+    severity: ToastSeverity,
+    icon: any,
+    summary: string
+  ) => {
+    toastRef.current?.show({
+      severity: severity,
+      summary: summary,
+      icon: icon,
+      life: 2000,
+    });
+  };
 
   const visualizarFactura = async (id: number) => {
     try {
@@ -28,14 +53,29 @@ export const TableListadoFacturasContainer: React.FC<
 
   const invalidarFactura = async (id: number) => {
     try {
-      const response = await invalidarDte(id);
+      setLoading(true);
+      await invalidarDte(id);
+      updateFacturas();
+      handleAccion(
+        'success',
+        <FaCircleCheck size={32} />,
+        'Factura invalidada con éxito'
+      );
     } catch (error) {
-      console.log(error);
+      handleAccion(
+        'error',
+        <IoMdCloseCircle size={32} />,
+        'Ah ocurrido un error al invalidar la factura'
+      );
+    } finally {
+      setLoading(false);
     }
   };
 
   return (
     <div>
+      {loading && <LoadingScreen />}
+      <CustomToast ref={toastRef} />
       <DataTable
         value={data}
         showGridlines
@@ -69,14 +109,14 @@ export const TableListadoFacturasContainer: React.FC<
                 )}
                 {rowData.estado_invalidacion ==
                   'En proceso de invalidación' && ( //estado en proceso de invalidacion (en proceso)
-                  <>
-                    <BsHourglassSplit
-                      className="text-primary-yellow"
-                      size={24}
-                    />
-                    <p className="text-primary-yellow">Invalidando</p>
-                  </>
-                )}
+                    <>
+                      <BsHourglassSplit
+                        className="text-primary-yellow"
+                        size={24}
+                      />
+                      <p className="text-primary-yellow">Invalidando</p>
+                    </>
+                  )}
                 {/* !estado && !sello no enviado */}
               </div>
             </>
@@ -97,7 +137,7 @@ export const TableListadoFacturasContainer: React.FC<
           body={(rowData: any) => (
             <>
               <span className="flex items-center gap-2">
-                {rowData.estado_invalidacion == 'Viva' && (
+                {(rowData.estado_invalidacion == 'Viva' && rowData.sello_recepcion) && (
                   <>
                     <Tooltip title="Anular">
                       <button

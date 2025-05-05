@@ -4,6 +4,7 @@ import { api } from '../../../../shared/services/api';
 export const generarFacturaService = async (id: string) => {
   try {
     const response = await api.get<FacturaResponse>(`/factura_pdf/${id}/`);
+    console.log("FACTURAAAAAA", response)
     return {
       emisor: response.data.json_original.emisor,
       receptor: response.data.json_original.receptor,
@@ -14,6 +15,7 @@ export const generarFacturaService = async (id: string) => {
         fechaEmision: response.data.fecha_emision,
         horaEmision: response.data.hora_emision,
         selloRemision: response.data.sello_recepcion,
+        contingencia: response.data.contingencia
       },
       productos: response.data.json_original.cuerpoDocumento,
       resumen: {
@@ -45,7 +47,7 @@ export const generarFacturaService = async (id: string) => {
       condicionOpeacion: response.data.condicion_operacion,
       extension: response.data.json_original.extension,
       ambiente: response.data.json_original.identificacion.ambiente,
-      json: response.data.json_firmado,
+      jsonFirmadoStatus: response.data.json_firmado?.status ?? null,
     };
   } catch (error) {
     console.log(error);
