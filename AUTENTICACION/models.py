@@ -3,6 +3,7 @@ from django.db import models
 import uuid
 
 class PasswordResetCode(models.Model):
+    #NEW
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
@@ -16,11 +17,13 @@ class PasswordResetCode(models.Model):
         return f"{self.user.email} – {self.code}"
     
 class ConfiguracionServidor(models.Model):
-    codigo = models.CharField(max_length=100, null=True, blank=True)
-    url = models.URLField(max_length=200, blank=True, null=True)
-    url_endpoint = models.URLField(max_length=200, blank=True, null=True)
-    ruta_archivo = models.CharField(max_length=100, blank=True, null=True)
+    ## NEW
+    clave = models.CharField(max_length=100, null=True, blank=True)
+    valor = models.CharField(max_length=200, blank=True, null=True)
+    url = models.CharField(max_length=200, blank=True, null=True)
+    url_endpoint = models.CharField(max_length=200, blank=True, null=True)
     contraseña = models.CharField(max_length=255, null=True, blank=True)
-    
+    fecha_creacion = models.DateField(auto_now_add=True, null=True)
+    descripcion = models.CharField(max_length=300, null=True, blank=True)
     def __str__(self):
-        return f"{self.codigo}"
+        return f"{self.clave}"

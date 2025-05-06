@@ -6,23 +6,24 @@ export const generarFacturaService = async (data: any) => {
   try {
     const response = await api.post(`/factura/generar/`, data);
     return response.data;
-  } catch (error:any) {
-    console.log("ERROR:", error.response.data);
+  } catch (error: any) {
+    console.log('ERROR:', error.response.data);
     throw new Error();
   }
 };
 
-export const generarAjusteService = async (tipo_dte: string) => {
+export const generarAjusteService = async (data: string) => {
+  console.log("data", data)
   try {
     const response = await api.get(`/factura_ajuste/generar/`, {
       params: {
-        tipo_dte,
+        data,
       },
     });
-    
+
     return response.data;
-  } catch (error:any) {
-    console.log("ERROR:", error.response.data);
+  } catch (error: any) {
+    console.log('ERROR:', error.response.data);
 
     throw new Error();
   }
@@ -61,7 +62,6 @@ export const getFacturaCodigos = async (tipo_dte: string) => {
       })
     );
 
-
     return {
       ...response.data,
       producto: productosConExtras,
@@ -77,7 +77,7 @@ export const FirmarFactura = async (id: string | undefined) => {
     await api.post(`/factura/firmar/${id}/`);
   } catch (error) {
     console.log(error);
-    throw new Error()
+    throw new Error();
   }
 };
 
@@ -86,7 +86,7 @@ export const EnviarHacienda = async (id: string) => {
     const response = await api.post(`/factura/${id}/enviar/`);
     return response;
   } catch (error) {
-    console.log(error)
+    console.log(error);
     throw error;
   }
 };
@@ -102,22 +102,21 @@ export const getFacturaBycodigo = async (codigo_generacion: string) => {
       }
     );
     return response.data;
-  } catch (error) {
-    throw new Error();
+  } catch (error:any) {
+    const msg = error.response.data.error
+    throw new Error(msg);
   }
 };
 
-export const enviarFactura = async (id: any, formData:any) => {
+export const enviarFactura = async (id: any, formData: any) => {
   try {
-    const response = await api.post(`/enviar-correo/${id}/`, formData,
-      {
-      headers: { 'Content-Type': 'multipart/form-data' }
-    }
-  );
-    console.log(response.data)
+    const response = await api.post(`/enviar-correo/${id}/`, formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    console.log(response.data);
     return response.data;
-  } catch (error:any) {
-    console.log("ERROR:", error.response.data);
+  } catch (error: any) {
+    console.log('ERROR:', error.response.data);
     throw new Error();
   }
 };

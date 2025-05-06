@@ -20,6 +20,10 @@ from django.core.mail import EmailMessage
 from datetime import datetime
 from django.template.loader import get_template
 
+import csv
+from django.views import View
+from FE.models import FacturaElectronica
+
 ###################################################################################################################
 
 @login_required
@@ -393,3 +397,107 @@ def enviar_quedan_hoy(request):
     # Responder con un mensaje de éxito
     return HttpResponse("Se enviaron todos los quedans generados el día de hoy.", content_type="text/plain")
 
+
+# ---------------------------------
+# ANEXOS DE HACIENDA
+# ---------------------------------
+
+# Anexo de Ventas a Consumidor Final
+
+class AnexoConsumidorFinalCSV(View):
+    """
+    CSV Anexo Consumidor Final para facturas de tipo_dte.codigo = '01'.
+    Agrega BOM para que Excel lea correctamente los acentos.
+    """
+
+    def get(self, request, *args, **kwargs):
+        # Solo facturas cuyo tipo_dte.codigo sea '01'
+        qs = FacturaElectronica.objects.filter(
+            tipo_dte__codigo='01'
+        ).order_by('fecha_emision')
+
+        print(f"[Anexo CSV] facturas tipo_dte=01: {qs.count()}")
+
+        response = HttpResponse(content_type='text/csv; charset=utf-8')
+        response['Content-Disposition'] = \
+            'attachment; filename="anexo_consumidor_final.csv"'
+        response.write('\ufeff')  # BOM para Excel
+
+        writer = csv.writer(response, delimiter=';')
+
+        # Cabecera
+        writer.writerow([
+            'FECHA DE EMISIÓN',
+            'CLASE DE DOCUMENTO',
+            'TIPO DE DOCUMENTO',
+            'NÚMERO DE RESOLUCIÓN',
+            'SERIE DEL DOCUMENTO',
+            'NUMERO DE CONTROL INTERNO DEL',
+            'NUMERO DE CONTROL INTERNO AL',
+            'NÚMERO DE DOCUMENTO (DEL)',
+            'NÚMERO DE DOCUMENTO (AL)',
+            'NÚMERO DE MAQUINA REGISTRADORA',
+            'VENTAS EXENTAS',
+            'VENTAS INTERNAS EXENTAS NO SUJETAS A PROPORCIONALIDAD',
+            'VENTAS NO SUJETAS',
+            'VENTAS GRAVADAS LOCALES',
+            'EXPORTACIONES DENTRO DEL ÁREA DE CENTROAMÉRICA',
+            'EXPORTACIONES FUERA DEL ÁREA DE CENTROAMÉRICA',
+            'EXPORTACIONES DE SERVICIO',
+            'VENTAS A ZONAS FRANCAS Y DPA (TASA CERO)',
+            'VENTAS A CUENTA DE TERCEROS NO DOMICILIADOS',
+            'TOTAL DE VENTAS',
+            'TIPO DE OPERACIÓN (RENTA)',
+            'TIPO DE INGRESO (RENTA)',
+            'NÚMERO DEL ANEXO',
+        ])
+
+        for f in qs:
+            fecha = f.fecha_emision.strftime('%d/%m/%Y')
+            clase = '4'
+            # Usamos la descripción que viene de la BD para el tipo 01
+            tipo = f"{f.tipo_dte.codigo}"
+            num_resol = f.numero_control or ''
+            serie = f.codigo_generacion.hex.upper() if f.codigo_generacion else ''
+
+            # Campos internos y máquina vacíos (si no aplica)
+            ctrl_del = ctrl_al = doc_del = doc_al = num_reg = ''
+
+            # Montos (asegurar no nulos)
+            v_exentas = f.total_exentas or 0
+            v_no_sujetas = f.total_no_sujetas or 0
+            v_gravadas = f.total_gravadas or 0
+            total_ventas = f.total_pagar or 0
+
+            # Operación / ingreso
+            tipo_oper = (
+                f"{f.condicion_operacion.codigo}"
+                if f.condicion_operacion else ''
+            )
+            tipo_ing = ''  # ajustar si lo calculas distinto
+
+            num_anexo = '2'
+
+            writer.writerow([
+                fecha,
+                clase,
+                tipo,
+                num_resol,
+                serie,
+                ctrl_del,
+                ctrl_al,
+                doc_del,
+                doc_al,
+                num_reg,
+                f"{v_exentas:.2f}",
+                '',  # ventas internas exentas no sujetas
+                f"{v_no_sujetas:.2f}",
+                f"{v_gravadas:.2f}",
+                '0.00', '0.00', '0.00', '0.00', '0.00',
+                f"{total_ventas:.2f}",
+                tipo_oper,
+                tipo_ing,
+                num_anexo,
+            ])
+
+        return response

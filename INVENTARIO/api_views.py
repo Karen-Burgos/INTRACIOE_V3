@@ -1,4 +1,5 @@
 
+from gettext import translation
 from rest_framework import generics
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -208,6 +209,10 @@ class ImpuestosDestroyAPIView(generics.DestroyAPIView):
 
 # listar todos los almacenes
 class AlmacenesListAPIView(generics.ListAPIView):
+    queryset = Almacen.objects.all()
+    serializer_class = AlmacenSerializer
+
+class AlmacenesDetailAPIView(generics.RetrieveAPIView):
     queryset = Almacen.objects.all()
     serializer_class = AlmacenSerializer
 

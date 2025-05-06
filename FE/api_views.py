@@ -21,7 +21,7 @@ from rest_framework.pagination import PageNumberPagination
 from .views import (
     contingencia_dte_view, enviar_contingencia_hacienda_view, enviar_correo_individual_view, enviar_factura_hacienda_view, enviar_factura_invalidacion_hacienda_view, enviar_lotes_hacienda_view, 
     finalizar_contigencia_view, firmar_contingencia_view, firmar_factura_anulacion_view, firmar_factura_view, 
-    invalidacion_dte_view, generar_json, lote_contingencia_dte_view, num_to_letras, agregar_formas_pago_api, generar_json_contingencia, 
+    invalidacion_dte_view, generar_json, lote_contingencia_dte_view, num_to_letras, agregar_formas_pago_api,
     generar_json_doc_ajuste, obtener_fecha_actual, obtener_listado_productos_view
 )
 
@@ -42,7 +42,7 @@ from .models import (
     TipoMoneda, TipoPersona, TipoRetencionIVAMH, TipoTransmision, TipoTransporte, TipoUnidadMedida, TiposDocIDReceptor, EventoInvalidacion, 
     Receptor_fe, TipoInvalidacion, TiposEstablecimientos, TiposServicio_Medico, Token_data, Descuento, FormasPago, TipoGeneracionDocumento, Plazo
 )
-from INVENTARIO.models import Almacen, DetalleDevolucionVenta, DevolucionVenta, MovimientoInventario, Producto, TipoItem, TipoTributo, Tributo, UnidadMedida
+from INVENTARIO.models import Almacen, DetalleDevolucionVenta, DevolucionVenta, MovimientoInventario, Producto, TipoItem, TipoTributo, Tributo, UnidadMedida, NotaCredito
 from django.db.models import Q
 from django.core.paginator import Paginator  # esta sigue igual
 
@@ -57,22 +57,24 @@ from xhtml2pdf import pisa
 from io import BytesIO
 from django.template.loader import render_to_string
 from weasyprint import HTML, CSS
+from django.db.models import F, Value
+from django.db.models.functions import Greatest
 
-FIRMADOR_URL = "http://192.168.2.25:8113/firmardocumento/"
-DJANGO_SERVER_URL = "http://127.0.0.1:8000"
+FIRMADOR_URL = ConfiguracionServidor.objects.filter(clave="firmador").first()
+DJANGO_SERVER_URL = ConfiguracionServidor.objects.filter(clave="server_url").first()
 
 SCHEMA_PATH_fe_fc_v1 = "FE/json_schemas/fe-fc-v1.json"
 
-CERT_PATH = "FE/cert/06142811001040.crt"  # Ruta al certificado
+CERT_PATH = ConfiguracionServidor.objects.filter(clave="certificado").first().url_endpoint #"FE/cert/06142811001040.crt"  # Ruta al certificado
 
 # URLS de Hacienda (Pruebas y Producción)
-HACIENDA_URL_TEST = "https://apitest.dtes.mh.gob.sv/fesv/recepciondte"
-HACIENDA_URL_PROD = "https://api.dtes.mh.gob.sv/fesv/recepciondte"
+HACIENDA_URL_TEST = ConfiguracionServidor.objects.filter(clave="hacienda_url_test").first().url_endpoint
+HACIENDA_URL_PROD = ConfiguracionServidor.objects.filter(clave="hacienda_url_prod").first().url_endpoint
 #cada endpoint que tenga url quemada agregarlas en una tabla de config, firmador y djangoserver
 #BC 04/03/2025: Constantes
 COD_CONSUMIDOR_FINAL = "01"
 COD_CREDITO_FISCAL = "03"
-VERSION_EVENTO_INVALIDACION = 2
+VERSION_EVENTO_INVALIDACION = ConfiguracionServidor.objects.filter(clave="version_evento_invalidacion").first().valor #2
 AMBIENTE = Ambiente.objects.get(codigo="01")#Hacer dinamico
 #AMBIENTE = "01"
 COD_FACTURA_EXPORTACION = "11"
@@ -90,9 +92,22 @@ RELACIONAR_DOC_FISICO = 1
 RELACIONAR_DOC_ELECTRONICO = 2
 COD_TIPO_CONTINGENCIA = "5"
 DTE_APLICA_CONTINGENCIA = ["01", "03", "04", "05", "06", "11", "14"]
-RUTA_COMPROBANTES_PDF = ConfiguracionServidor.objects.filter(codigo="ruta_comprobantes_dte").first()
-RUTA_COMPROBANTES_JSON = ConfiguracionServidor.objects.filter(codigo="ruta_comprobante_json").first()
-RUTA_JSON_FACTURA = ConfiguracionServidor.objects.filter(codigo="json_factura").first()
+RUTA_COMPROBANTES_PDF = ConfiguracionServidor.objects.filter(clave="ruta_comprobantes_dte").first()
+RUTA_COMPROBANTES_JSON = ConfiguracionServidor.objects.filter(clave="ruta_comprobante_json").first()
+RUTA_JSON_FACTURA = ConfiguracionServidor.objects.filter(clave="json_factura").first()
+URL_AUTH = ConfiguracionServidor.objects.filter(clave="url_autenticacion").first()
+HEADERS = ConfiguracionServidor.objects.filter(clave="headers").first()
+CONTENT_TYPE = ConfiguracionServidor.objects.filter(clave="content_type").first()
+INVALIDAR_DTE_URL = ConfiguracionServidor.objects.filter(clave="url_invalidar_dte").first()
+VERSION_EVENTO_CONTINGENCIA = ConfiguracionServidor.objects.filter(clave="version_evento_contingencia").first()
+FACTURAS_FIRMADAS_URL = ConfiguracionServidor.objects.filter(clave="json_facturas_firmadas").first()
+HACIENDA_CONTINGENCIA_URL = ConfiguracionServidor.objects.filter(clave="hacienda_contingencia_url").first()
+USER_AGENT = ConfiguracionServidor.objects.filter(clave="user_agent").first()
+CONSULTAR_DTE = ConfiguracionServidor.objects.filter(clave="consulta_dte").first()
+EMAIL_HOST_FE = ConfiguracionServidor.objects.filter(clave="email_host_fe").first()
+
+MONEDA_USD = TipoMoneda.objects.get(codigo="USD")
+UNI_MEDIDA_99 = TipoUnidadMedida.objects.get(codigo="99")
 
 formas_pago = [] #Asignar formas de pago
 documentos_relacionados = []
@@ -130,12 +145,12 @@ class AutenticacionAPIView(APIView):
         pwd = request.data.get("pwd")    # Contraseña enviada desde el cuerpo de la solicitud
 
         # URL de autenticación
-        auth_url = "https://api.dtes.mh.gob.sv/seguridad/auth"
+        auth_url = URL_AUTH.url_endpoint #"https://api.dtes.mh.gob.sv/seguridad/auth"
         
         # Headers para la solicitud
         headers = {
-            "User-Agent": "MiAplicacionDjango/1.0",
-            "Content-Type": "application/x-www-form-urlencoded",
+            "User-Agent": HEADERS.valor,
+            "Content-Type": HEADERS.url_endpoint,
         }
 
         # Datos para el cuerpo de la solicitud
@@ -192,8 +207,8 @@ def autenticacion(request):
         nit_empresa = request.POST.get("user")
         pwd = request.POST.get("pwd")
 
-        auth_url = "https://api.dtes.mh.gob.sv/seguridad/auth"
-        headers = {"User-Agent": "MiAplicacionDjango/1.0"}
+        auth_url = URL_AUTH.url_endpoint
+        headers = {"User-Agent": HEADERS.valor}
         data = {"user": nit_empresa, "pwd": pwd}
 
         try:
@@ -1219,13 +1234,14 @@ class GenerarFacturaAPIView(APIView):
                     }
                 )
 
-            ambiente_obj = Ambiente.objects.get(codigo="01")
+            ambiente_obj = AMBIENTE
             tipo_dte_obj = Tipo_dte.objects.get(codigo=tipo_dte)
             tipo_item_obj = TipoItem.objects.get(codigo=tipo_item)
 
             tipomodelo_obj = Modelofacturacion.objects.get(codigo="1")
+            tipotransmision_obj = TipoTransmision.objects.get(codigo="1")
             tipooperacion_obj = CondicionOperacion.objects.get(id=tipooperacion_id) if tipooperacion_id else None
-            tipo_moneda_obj = TipoMoneda.objects.get(codigo="USD")
+            tipo_moneda_obj = MONEDA_USD
 
             factura = FacturaElectronica.objects.create(
                 version="1.0",
@@ -1240,7 +1256,8 @@ class GenerarFacturaAPIView(APIView):
                 dtereceptor=receptor,
                 json_original={},
                 firmado=False,
-                base_imponible=base_imponible_checkbox
+                base_imponible=base_imponible_checkbox,
+                tipotransmision=tipotransmision_obj
             )
 
             # Inicialización de acumuladores
@@ -1270,7 +1287,7 @@ class GenerarFacturaAPIView(APIView):
                     continue
 
                 if base_imponible_checkbox is True or tipo_item_obj.codigo == COD_TIPO_ITEM_OTROS:
-                    unidad_medida_obj = TipoUnidadMedida.objects.get(codigo="99")
+                    unidad_medida_obj = UNI_MEDIDA_99
                 else:
                     unidad_medida_obj = TipoUnidadMedida.objects.get(codigo=producto.unidad_medida.codigo)
 
@@ -1318,7 +1335,7 @@ class GenerarFacturaAPIView(APIView):
                 iva_unitario = (precio_incl - precio_neto).quantize(Decimal("0.000001"), rounding=ROUND_HALF_UP)
                 
                 if porcentaje_descuento_producto:
-                    porcentaje_descuento_item = Descuento.objects.get(porcentaje=(porcentaje_descuento_producto * 100))
+                    porcentaje_descuento_item = Descuento.objects.get(id=porcentaje_descuento_producto)
                 else:
                     porcentaje_descuento_item = Descuento.objects.first()
                     
@@ -1445,7 +1462,7 @@ class GenerarFacturaAPIView(APIView):
                     else:
                         if tipo_item_obj.codigo == COD_TIPO_ITEM_OTROS:
                             codTributo = tributo.codigo
-                            if det.producto.tributo.tipo_tributo.codigo == COD_TRIBUTOS_SECCION_2:
+                            if tributo.tipo_tributo.codigo == COD_TRIBUTOS_SECCION_2:
                                 cuerpo_documento_tributos.append({
                                     "numItem": idx+1,
                                     "tipoItem": int(tipo_item_obj.codigo),
@@ -1500,13 +1517,13 @@ class GenerarFacturaAPIView(APIView):
                 factura.formas_Pago = formas_pago_id
             factura.save()
             
-            json_path = os.path.join("FE/json_facturas", f"{factura.numero_control}.json")
+            json_path = os.path.join(RUTA_JSON_FACTURA.url, f"{factura.numero_control}.json")
             os.makedirs(os.path.dirname(json_path), exist_ok=True)
             with open(json_path, "w", encoding="utf-8") as f:
                 json.dump(factura_json, f, indent=4, ensure_ascii=False)
             
             # Verificar si el archivo PDF existe
-            pdf_signed_path = os.path.join(RUTA_COMPROBANTES_PDF.ruta_archivo, factura.tipo_dte.codigo, 'pdf', f"{str(factura.codigo_generacion).upper()}.pdf")
+            pdf_signed_path = os.path.join(RUTA_COMPROBANTES_PDF.url, factura.tipo_dte.codigo, 'pdf', f"{str(factura.codigo_generacion).upper()}.pdf")
             
             os.makedirs(os.path.dirname(pdf_signed_path), exist_ok=True)
             if os.path.exists(pdf_signed_path):
@@ -1515,25 +1532,38 @@ class GenerarFacturaAPIView(APIView):
             else:
                 #1.Crear HTML
                 html_content = render_to_string('documentos/factura_consumidor/template_factura.html', {"factura": factura}, request=request)
+
+                #Guardar archivo pdf
+                print("guardar pdf: ", pdf_signed_path)
+                with open(pdf_signed_path, "wb") as pdf_file:
+                    pisa_status = pisa.CreatePDF(BytesIO(html_content.encode('utf-8')), dest=pdf_file)
+                    
+                if pisa_status.err:
+                    print(f"Error al crear el PDF en {pdf_signed_path}")
+                else:
+                    print(f"PDF guardado exitosamente en {pdf_signed_path}")
+            # else:
+            #     #1.Crear HTML
+            #     html_content = render_to_string('documentos/factura_consumidor/template_factura.html', {"factura": factura}, request=request)
                 
-                #2.Definir base_url para que {% static %} funcione correctamente, esto asegura que las imágenes estáticas (logos, etc.) se resuelvan bien en el PDF
-                try:
-                    base_url = request.build_absolute_uri('/')
-                except Exception as e:
-                    print("Error obteniendo base_url")
-                    base_url = None  # WeasyPrint usará paths relativos si es None
+            #     #2.Definir base_url para que {% static %} funcione correctamente, esto asegura que las imágenes estáticas (logos, etc.) se resuelvan bien en el PDF
+            #     try:
+            #         base_url = request.build_absolute_uri('/')
+            #     except Exception as e:
+            #         print("Error obteniendo base_url")
+            #         base_url = None  # WeasyPrint usará paths relativos si es None
                 
-                # 3. Preparar lista de CSS
-                stylesheets = [CSS(url='https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js') ]
+            #     # 3. Preparar lista de CSS
+            #     stylesheets = [CSS(url='https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js') ]
                 
                 #4.Guardar archivo PDF con WeasyPrint
-                try:
-                    html = HTML(string=html_content, base_url=base_url)
-                    html.write_pdf(stylesheets=stylesheets, target=pdf_signed_path)
-                    filename = os.path.basename(pdf_signed_path)
-                    print("Pdf guardado ")
-                except Exception as e:
-                    print("Error generando el PDF con WeasyPrint")
+                # try:
+                #     html = HTML(string=html_content, base_url=base_url)
+                #     html.write_pdf(stylesheets=stylesheets, target=pdf_signed_path)
+                #     filename = os.path.basename(pdf_signed_path)
+                #     print("Pdf guardado ")
+                # except Exception as e:
+                #     print("Error generando el PDF con WeasyPrint")
 
             return Response({
                     "mensaje": "Factura generada correctamente",
@@ -1551,6 +1581,18 @@ class GenerarDocumentoAjusteAPIView(APIView):
     cod_generacion = str(uuid.uuid4()).upper()
     def get(self, request, format=None):
         print("GET Inicio generar dte")
+        global productos_ids_r
+        productos_ids_r = []
+        
+        global cantidades_prod_r
+        cantidades_prod_r = []
+        
+        global documentos_relacionados 
+        documentos_relacionados = []
+        
+        global descuentos_r
+        descuentos_r = []
+        
         if request.method == 'GET':
             tipo_dte = request.query_params.get('tipo_dte', '05')
             emisor_obj = Emisor_fe.objects.first()
@@ -1638,6 +1680,7 @@ class GenerarDocumentoAjusteAPIView(APIView):
             else:
                 documento_relacionado = documento_relacionado.upper()
             porcentaje_descuento = data.get("descuento_select", "0")
+            porcentaje_descuento_producto = 0
             if porcentaje_descuento:
                 porcentaje_descuento_producto = porcentaje_descuento.replace(",", ".")
             print("-Descuento: ", porcentaje_descuento_producto)
@@ -1675,6 +1718,7 @@ class GenerarDocumentoAjusteAPIView(APIView):
             productos_ids = data.get('productos_ids', [])
             cantidades = data.get('cantidades', [])
             print(f"productos.: = {productos_ids}, cantidades.: = {cantidades}")
+            descuentos_aplicados = data.get("descuento_select", [])
             
             if productos_ids_r is not None and len(productos_ids_r)>0:
                 for id in productos_ids_r:
@@ -1682,9 +1726,16 @@ class GenerarDocumentoAjusteAPIView(APIView):
                 
             if cantidades_prod_r is not None and len(cantidades_prod_r)>0:
                 for c in cantidades_prod_r:
+                    
                     cantidades.append(c)
             
+            print(f"productos id relacionado: {productos_ids_r}, cantidades: {cantidades}")
+
             print(f"id productos: {productos_ids}, cantidades: {cantidades}")
+            if descuentos_r is not None and len(descuentos_r)>0:
+                for d in descuentos_r:
+                    descuentos_aplicados.append(d)
+            print("descuento aplicado: ", descuentos_aplicados)
             # En este caso, se asume que el descuento por producto es 0 (se aplica globalmente)
             
             if numero_control:
@@ -1718,13 +1769,14 @@ class GenerarDocumentoAjusteAPIView(APIView):
                 )
 
             # Configuración por defecto de la factura
-            ambiente_obj = Ambiente.objects.get(codigo="01")
+            ambiente_obj = AMBIENTE
             tipo_dte_obj = Tipo_dte.objects.get(codigo=tipo_dte)
             tipo_item_obj = TipoItem.objects.get(codigo=tipo_item)
 
             tipomodelo_obj = Modelofacturacion.objects.get(codigo="1")
+            tipotransmision_obj = TipoTransmision.objects.get(codigo="1")
             tipooperacion_obj = CondicionOperacion.objects.get(id=tipooperacion_id) if tipooperacion_id else None
-            tipo_moneda_obj = TipoMoneda.objects.get(codigo="USD")
+            tipo_moneda_obj = MONEDA_USD
 
             factura = FacturaElectronica.objects.create(
                 version="1.0",
@@ -1739,7 +1791,8 @@ class GenerarDocumentoAjusteAPIView(APIView):
                 dtereceptor=receptor,
                 json_original={},
                 firmado=False,
-                base_imponible = base_imponible_checkbox
+                base_imponible = base_imponible_checkbox,
+                tipotransmision=tipotransmision_obj
             )
 
             # Inicializar acumuladores globales
@@ -1751,12 +1804,15 @@ class GenerarDocumentoAjusteAPIView(APIView):
             DecimalIvaPerci = Decimal("0.00")
             total_operaciones = Decimal("0.00")
             total_descuento_gravado = Decimal("0.00")
+            descuento_item = Decimal("0.00")
             total_no_gravado = Decimal("0.00")
             sub_total = Decimal("0.00")
             porc_descuento_global = Decimal("0.00")
             total_iva_item = Decimal("0.00")
             precio_inc_neto = Decimal("0.00")
             descuento_gravado = Decimal("0.00")
+            neto_unitario = Decimal("0.00")
+            sub_total_item = Decimal("0")
             
             #Campos DTE
             tributo_valor = None
@@ -1772,7 +1828,7 @@ class GenerarDocumentoAjusteAPIView(APIView):
                 # Obtener unidad de medida
                 #Unidad de medida = 99 cuando el contribuyente preste un servicio
                 if base_imponible_checkbox is True or tipo_item_obj.codigo == COD_TIPO_ITEM_OTROS:
-                    unidad_medida_obj = TipoUnidadMedida.objects.get(codigo="99")
+                    unidad_medida_obj = UNI_MEDIDA_99
                 else:
                     unidad_medida_obj = TipoUnidadMedida.objects.get(codigo=producto.unidad_medida.codigo)
 
@@ -1782,7 +1838,8 @@ class GenerarDocumentoAjusteAPIView(APIView):
                 else:
                     cantidad = int(cantidades[index]) if index < len(cantidades) else 1
                 print("-Cantidad: ", cantidad, "index: ", index)
-                
+                print("descuentos items: ", descuentos_aplicados)
+                porcentaje_descuento_producto = descuentos_aplicados[index] if index < len(descuentos_aplicados) else 0.00
                 # El precio del producto ya incluye IVA 
                 precio_incl = producto.preunitario
                 
@@ -1802,15 +1859,18 @@ class GenerarDocumentoAjusteAPIView(APIView):
                 if base_imponible_checkbox is True:
                     precio_neto = float(0.00)
                 else:
-                    precio_neto = (precio_incl * cantidad).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-                    total_iva_item = ( precio_neto * Decimal("0.13") ).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-                    precio_inc_neto = precio_incl
+                    if producto.precio_iva:
+                        neto_unitario = (precio_incl / Decimal("1.13") ).quantize(Decimal("0.000001"), rounding=ROUND_HALF_UP)
+                        precio_inc_neto = neto_unitario
+                    else:
+                        neto_unitario = (precio_incl).quantize(Decimal("0.000001"), rounding=ROUND_HALF_UP)
+                        precio_inc_neto = neto_unitario
+                    precio_neto = (neto_unitario * cantidad).quantize(Decimal("0.000001"), rounding=ROUND_HALF_UP)
                 if tipo_item_obj.codigo == COD_TIPO_ITEM_OTROS:
-                    precio_neto = (precio_neto * Decimal(tributo_valor)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+                    precio_neto = (precio_neto * Decimal(tributo_valor)).quantize(Decimal("0.000001"), rounding=ROUND_HALF_UP)
                     
                 precio_neto = Decimal(precio_neto)          
-                iva_unitario = (precio_incl - precio_neto).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-                #total_iva_item = ( ( precio_neto * cantidad) / Decimal("1.13") * Decimal("0.13") ).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+                iva_unitario = (precio_incl - precio_neto).quantize(Decimal("0.000001"), rounding=ROUND_HALF_UP)
 
                 #Campo descuento(montoDescu)
                 print("-porcentaje api view: ", porcentaje_descuento_producto)
@@ -1818,7 +1878,7 @@ class GenerarDocumentoAjusteAPIView(APIView):
                     porcentaje_descuento_item = Descuento.objects.get(porcentaje=porcentaje_descuento_producto)
                 else:
                     porcentaje_descuento_item = Descuento.objects.first()
-                
+                descuento_porcentaje = (porcentaje_descuento_item.porcentaje / 100).quantize(Decimal("0.000001"), rounding=ROUND_HALF_UP)
                 if porcentaje_descuento_item.porcentaje > Decimal("0.00"):
                     descuento_aplicado=True
                 else:
@@ -1829,7 +1889,7 @@ class GenerarDocumentoAjusteAPIView(APIView):
                 #Campo Ventas gravadas
                 print(f"Monto descuento: {monto_descuento}")
                 if monto_descuento:
-                    monto_descuento = (Decimal(monto_descuento) / Decimal("100")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+                    monto_descuento = Decimal(monto_descuento).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
                 else:
                     monto_descuento = Decimal("0.00")
                 print(f"Precio neto = {precio_neto}, descuento grav = {descu_gravado}")
@@ -1837,20 +1897,11 @@ class GenerarDocumentoAjusteAPIView(APIView):
                 if descu_gravado is None or descu_gravado == "":
                     descu_gravado = Decimal("0.00")
                     
-                total_descuento_gravado = (precio_neto * porcentaje_descuento_item.porcentaje).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-                #total_neto = ((precio_neto * cantidad) - (porcentaje_descuento_item.porcentaje / Decimal("100"))).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-                total_neto = (precio_neto - total_descuento_gravado).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-                descuento_gravado = (total_neto * Decimal(descu_gravado) / Decimal("100")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-                print("descuento aplicado")
-                print("calcular descuento global: ", descuento_global)
-                sub_total_item = Decimal("0")
-                if descuento_global:
-                    porc_descuento_global = (total_neto * Decimal(descuento_global) / Decimal("100")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-                    sub_total_item = (total_neto - descuento_gravado - porc_descuento_global).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-                else:
-                    sub_total_item = (total_neto - descuento_gravado).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-                print(f"-subTotal = {sub_total_item}, total neto = {total_neto}, porcentaje = {descu_gravado}, descuento global = {porc_descuento_global} ")
-                print(f"IVA Item = {total_iva_item}, iva unitario = {iva_unitario}, cantidad = {cantidad}, total neto = {total_neto} ")
+                descuento_item = (precio_neto * descuento_porcentaje).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+                total_neto = (precio_neto - descuento_item).quantize(Decimal("0.000001"), rounding=ROUND_HALF_UP)
+                #Calcular IVA
+                total_iva_item = ( total_neto * Decimal("0.13") ).quantize(Decimal("0.000001"), rounding=ROUND_HALF_UP)
+
                 #Campo codTributo
                 cuerpo_documento_tributos = []
                 tributo = None
@@ -1861,7 +1912,7 @@ class GenerarDocumentoAjusteAPIView(APIView):
                 #Tributo sujeto iva (asociado al prod)
                 if tipo_item_obj.codigo == COD_TIPO_ITEM_OTROS:
                     tributo = Tributo.objects.get(codigo=producto.tributo.codigo)
-                    precio_neto = (precio_neto * Decimal(tributo.valor_tributo)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+                    precio_neto = (precio_neto * Decimal(tributo.valor_tributo)).quantize(Decimal("0.000001"), rounding=ROUND_HALF_UP)
                     
                 print("-Crear detalle factura")
                 detalle = DetalleFactura.objects.create(
@@ -1869,13 +1920,13 @@ class GenerarDocumentoAjusteAPIView(APIView):
                     producto=producto,
                     cantidad=cantidad,
                     unidad_medida=unidad_medida_obj,
-                    precio_unitario=precio_inc_neto * Decimal("-1"),  # Se almacena el precio bruto (con IVA)
+                    precio_unitario=precio_inc_neto, # Se almacena el precio bruto (con IVA)
                     descuento=porcentaje_descuento_item,
                     tiene_descuento = descuento_aplicado,
                     ventas_no_sujetas=Decimal("0.00"),
                     ventas_exentas=Decimal("0.00"),
-                    ventas_gravadas=total_neto * Decimal("-1"),  # Total neto
-                    pre_sug_venta=precio_inc_neto * Decimal("-1"),
+                    ventas_gravadas=total_neto,  # Total neto
+                    pre_sug_venta=precio_inc_neto,
                     no_gravado=Decimal("0.00"),
                     saldo_favor=Decimal("0.00"),
                     tipo_documento_relacionar = tipo_doc_relacionar,
@@ -1883,27 +1934,36 @@ class GenerarDocumentoAjusteAPIView(APIView):
                 )
                 #resumen.totalGravado y subTotalVentas
                 total_gravada += total_neto
-                sub_total += sub_total_item
+                if descu_gravado:
+                    descuento_gravado = (total_gravada * Decimal(descu_gravado) / Decimal("100")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+                
+                #Si el producto tiene porcentaje gobal restarlo al subtotal
+                sub_total_item = Decimal("0")
+                if descuento_global:
+                    porc_descuento_global = (total_gravada * Decimal(descuento_global) / Decimal("100")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+                sub_total_item = (total_gravada - descuento_gravado - porc_descuento_global).quantize(Decimal("0.000001"), rounding=ROUND_HALF_UP)
+                print(f"IVA Item = {total_iva_item}, iva unitario = {iva_unitario}, cantidad = {cantidad}, total neto = {total_neto} ")
+                
+                sub_total = sub_total_item
                 
                 #Calcular el valor del tributo
                 if tributo_valor is not None:
                     valorTributo = ( Decimal(total_gravada) * Decimal(tributo_valor) ).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-                    total_operaciones = (sub_total + valorTributo + DecimalIvaPerci) - DecimalRetIva
+                    total_operaciones = ((sub_total + valorTributo + DecimalIvaPerci) - DecimalRetIva).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
                 else:
-                    total_operaciones = sub_total
+                    total_operaciones = (sub_total).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
                 
-                total_operaciones = (total_gravada + valorTributo + DecimalIvaPerci) - DecimalRetIva
-                total_con_iva = total_operaciones - DecimalIvaPerci - DecimalRetIva - DecimalRetRenta - total_no_gravado
+                total_con_iva = (total_operaciones - DecimalIvaPerci - DecimalRetIva - DecimalRetRenta - total_no_gravado).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
                 
-                total_iva += total_iva_item
+                total_iva += (total_iva_item).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
                 #total_pagar += total_con_iva
                 total_pagar = total_con_iva
                 
                 # Actualizamos manualmente los campos calculados
-                detalle.total_sin_descuento = total_neto * Decimal("-1")
-                detalle.iva = total_iva_item * Decimal("-1")
-                detalle.total_con_iva = total_con_iva * Decimal("-1")
-                detalle.iva_item = total_iva_item * Decimal("-1") # Guardamos el total IVA para este detalle
+                detalle.total_sin_descuento = (total_neto).quantize(Decimal("0.000001"), rounding=ROUND_HALF_UP)
+                detalle.iva = (total_iva_item).quantize(Decimal("0.000001"), rounding=ROUND_HALF_UP)
+                detalle.total_con_iva = (total_con_iva).quantize(Decimal("0.000001"), rounding=ROUND_HALF_UP)
+                detalle.iva_item = (total_iva_item).quantize(Decimal("0.000001"), rounding=ROUND_HALF_UP)  # Guardamos el total IVA para este detalle
                 detalle.save()
                 
                 print("-Aplicar tributo sujeto iva")
@@ -1930,7 +1990,7 @@ class GenerarDocumentoAjusteAPIView(APIView):
             total_pagar = total_pagar.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
             
             #Sino se ha seleccionado ningun documento a relacionar enviar null los campos
-            if tipo_doc_relacionar is COD_DOCUMENTO_RELACIONADO_NO_SELEC:
+            if tipo_doc_relacionar == COD_DOCUMENTO_RELACIONADO_NO_SELEC:
                 tipo_doc_relacionar = None
                 documento_relacionado = None
             print(f"Tipo de doc a relacionar: {tipo_doc_relacionar} numero de documento: {documento_relacionado}")
@@ -1938,25 +1998,25 @@ class GenerarDocumentoAjusteAPIView(APIView):
             # Actualizar totales en la factura
             factura.total_no_sujetas = Decimal("0.00")
             factura.total_exentas = Decimal("0.00")
-            factura.total_gravadas = Decimal(total_gravada) * Decimal("-1")
-            factura.sub_total_ventas = Decimal(total_gravada) * Decimal("-1")
+            factura.total_gravadas = (total_gravada).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+            factura.sub_total_ventas = (total_gravada).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
             factura.descuen_no_sujeto = Decimal("0.00")
             factura.descuento_exento = Decimal("0.00")
-            factura.descuento_gravado = Decimal(descuento_gravado) * Decimal("-1")
-            factura.por_descuento = Decimal(porc_descuento_global) * Decimal("-1") #Decimal("0.00")
-            factura.total_descuento = Decimal(monto_descuento) * Decimal("-1")
-            factura.sub_total = Decimal(sub_total) * Decimal("-1")
-            factura.iva_retenido = Decimal(DecimalRetIva) * Decimal("-1")
-            factura.retencion_renta = DecimalRetRenta
-            factura.total_operaciones = Decimal(total_operaciones) * Decimal("-1") #total_gravada
+            factura.descuento_gravado = float(descuento_gravado)
+            factura.por_descuento = porc_descuento_global #Decimal("0.00")
+            factura.total_descuento = float(monto_descuento)
+            factura.sub_total = (sub_total).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+            factura.iva_retenido = float(DecimalRetIva)
+            factura.retencion_renta = float(DecimalRetRenta)
+            factura.total_operaciones = float(total_operaciones) #total_gravada
             factura.total_no_gravado = Decimal("0.00")
-            factura.total_pagar = Decimal(total_pagar) * Decimal("-1")
+            factura.total_pagar = float(total_pagar)
             factura.total_letras = num_to_letras(total_pagar)
-            factura.total_iva = Decimal(total_iva) * Decimal("-1")
+            factura.total_iva = float(total_iva)
             factura.condicion_operacion = tipooperacion_obj
-            factura.iva_percibido = Decimal(DecimalIvaPerci) * Decimal("-1")
+            factura.iva_percibido = float(DecimalIvaPerci)
             factura.tipo_documento_relacionar = tipo_doc_relacionar
-            factura.documento_relacionado = documento_relacionado
+            factura.documento_relacionado = documento_relacionado.upper()
             factura.save()
 
             # Construir el cuerpoDocumento para el JSON con desglose
@@ -1987,17 +2047,17 @@ class GenerarDocumentoAjusteAPIView(APIView):
                                 cuerpo_documento_tributos.append({
                                     "numItem": idx+1,
                                     "tipoItem": int(tipo_item_obj.codigo),
-                                    "numeroDocumento": str(det.documento_relacionado),
+                                    "numeroDocumento": str(det.documento_relacionado.upper()),
                                     "cantidad": float(det.cantidad), 
                                     "codigo": str(det.producto.codigo),
                                     "codTributo": codTributo,
                                     "uniMedida": int(det.unidad_medida.codigo),
                                     "descripcion": str(tributo.descripcion),
-                                    "precioUni": float(abs(det.precio_unitario)),
-                                    "montoDescu": float(abs(det.descuento.porcentaje)),
+                                    "precioUni": float(abs(det.precio_unitario.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))),
+                                    "montoDescu": float( abs(( (det.precio_unitario * det.cantidad) * (Decimal(det.descuento.porcentaje) / Decimal("100")))).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP) ),
                                     "ventaNoSuj": float(0.0),
                                     "ventaExenta": float(0.0),
-                                    "ventaGravada": float(abs(det.ventas_gravadas)),
+                                    "ventaGravada": float( abs(det.ventas_gravadas.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)) ),
                                     "tributos": tributos
                                 })
 
@@ -2011,17 +2071,17 @@ class GenerarDocumentoAjusteAPIView(APIView):
                         cuerpo_documento.append({
                             "numItem": idx,
                             "tipoItem": int(tipo_item_obj.codigo),
-                            "numeroDocumento": str(det.documento_relacionado),
+                            "numeroDocumento": str(det.documento_relacionado.upper()),
                             "cantidad": float(det.cantidad), 
                             "codigo": str(det.producto.codigo),
                             "codTributo": codTributo,
                             "uniMedida": int(det.unidad_medida.codigo), 
                             "descripcion": str(det.producto.descripcion),
-                            "precioUni": float(abs(det.precio_unitario)),
-                            "montoDescu": float(abs(det.descuento.porcentaje)),
-                            "ventaNoSuj": float(abs(det.ventas_no_sujetas)),
-                            "ventaExenta": float(abs(det.ventas_exentas)),
-                            "ventaGravada": float(abs(det.ventas_gravadas)),
+                            "precioUni": float(abs(det.precio_unitario.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))),
+                            "montoDescu": float(abs( ( ((det.precio_unitario * det.cantidad) * (Decimal(det.descuento.porcentaje)) / Decimal("100")) ).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP) )),
+                            "ventaNoSuj": float(abs(det.ventas_no_sujetas.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))),
+                            "ventaExenta": float(abs(det.ventas_exentas.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))),
+                            "ventaGravada": float(abs(det.ventas_gravadas.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))),
                             "tributos": tributos
                         })
                                         
@@ -2077,26 +2137,78 @@ class GenerarDocumentoAjusteAPIView(APIView):
             else:
                 notificar_respuesta = "Verifica que el DTE este vigente para poder relacionarlo."
                 
-            if contingencia:
-                generar_json_contingencia(emisor, cuerpo_documento)
-            else:
-                factura_json = generar_json_doc_ajuste(
-                    ambiente_obj, tipo_dte_obj, factura, emisor, receptor,
-                    cuerpo_documento, observaciones, documentos_relacionados, contingencia, total_gravada
-                )
-
+            factura_json = generar_json_doc_ajuste(
+                ambiente_obj, tipo_dte_obj, factura, emisor, receptor,
+                cuerpo_documento, observaciones, documentos_relacionados, contingencia, total_gravada
+            )
             
             factura.json_original = factura_json
             factura.save()
 
+            # Si acabamos de generar una Nota de Crédito, registramos la devolución al cliente:
+            if tipo_dte_obj.codigo == COD_NOTA_CREDITO:
+                # 1) Crear la devolución de venta
+                devolucion = DevolucionVenta.objects.create(
+                    num_factura=factura.numero_control,
+                    motivo="Devolución generada por Nota de Crédito",
+                    estado="Aprobada",
+                    usuario=request.user.username if request.user.is_authenticated else None
+                )
+                # 2) Registrar cada detalle de devolución y el reingreso de stock
+                for det in factura.detalles.all():
+                    # 2a) Detalle de la devolución
+                    DetalleDevolucionVenta.objects.create(
+                        devolucion=devolucion,
+                        producto=det.producto,
+                        cantidad=det.cantidad,
+                        motivo_detalle="Reingreso automático por NC"
+                    )
+                    # 2b) Movimiento de inventario de Entrada
+                    if det is not None and det.producto.almacenes.exists():
+                        almacen = det.producto.almacenes.first() or Almacen.objects.first()
+                        MovimientoInventario.objects.create(
+                            producto=det.producto,
+                            almacen=almacen,
+                            tipo='Entrada',
+                            cantidad=det.cantidad,
+                            referencia=f"Reingreso NC {factura.numero_control}"
+                        )
+                    # 2c) Ajuste de stock atómico
+                    Producto.objects.filter(pk=det.producto.pk).update(
+                        stock=F('stock') + det.cantidad
+                    )
+                # 3) Generar la Nota de Crédito
+                NotaCredito.objects.create(
+                    devolucion=devolucion,
+                    monto=factura.total_pagar,
+                    estado="Pendiente"
+                )
+            # 2) Si es Nota de Débito ➞ salida extra de stock
+            elif tipo_dte_obj.codigo == COD_NOTA_DEBITO:
+                # (opcional) si quieres guardar un modelo NotaDebito, créalo aquí
+                for det in factura.detalles.all():
+                    if det is not None and det.producto.almacenes.exists():
+                        MovimientoInventario.objects.create(
+                            producto=det.producto,
+                            almacen=det.producto.almacenes.first() or Almacen.objects.first(),
+                            tipo='Salida',
+                            cantidad=det.cantidad,
+                            referencia=f"Salida ND {factura.numero_control}"
+                        )
+                        # ajustar stock sin bajar de cero
+                        Producto.objects.filter(pk=det.producto.pk).update(
+                            stock=Greatest(F('stock') - det.cantidad, Value(0))
+                        )
+            print("factura.numero_control", factura.numero_control)
             # Guardar el JSON en la carpeta "FE/json_facturas"
-            json_path = os.path.join("FE/json_facturas", f"{factura.numero_control}.json")
+            json_path = os.path.join(RUTA_JSON_FACTURA.url, f"{factura.numero_control}.json")
             os.makedirs(os.path.dirname(json_path), exist_ok=True)
             with open(json_path, "w", encoding="utf-8") as f:
                 json.dump(factura_json, f, indent=4, ensure_ascii=False)
             
             # Verificar si el archivo PDF existe
-            pdf_signed_path = os.path.join(RUTA_COMPROBANTES_PDF.ruta_archivo, factura.tipo_dte.codigo, 'pdf', f"{str(factura.codigo_generacion).upper()}.pdf")
+            pdf_signed_path = os.path.join(RUTA_COMPROBANTES_PDF.url, factura.tipo_dte.codigo, 'pdf', f"{str(factura.codigo_generacion).upper()}.pdf")
+
             
             os.makedirs(os.path.dirname(pdf_signed_path), exist_ok=True)
             if os.path.exists(pdf_signed_path):
@@ -2105,25 +2217,16 @@ class GenerarDocumentoAjusteAPIView(APIView):
             else:
                 #1.Crear HTML
                 html_content = render_to_string('documentos/factura_consumidor/template_factura.html', {"factura": factura}, request=request)
-                
-                #2.Definir base_url para que {% static %} funcione correctamente, esto asegura que las imágenes estáticas (logos, etc.) se resuelvan bien en el PDF
-                try:
-                    base_url = request.build_absolute_uri('/')
-                except Exception as e:
-                    print("Error obteniendo base_url")
-                    base_url = None  # WeasyPrint usará paths relativos si es None
-                
-                # 3. Preparar lista de CSS
-                stylesheets = [CSS(url='https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js') ]
-                
-                #4.Guardar archivo PDF con WeasyPrint
-                try:
-                    html = HTML(string=html_content, base_url=base_url)
-                    html.write_pdf(stylesheets=stylesheets, target=pdf_signed_path)
-                    filename = os.path.basename(pdf_signed_path)
-                    print("Pdf guardado ")
-                except Exception as e:
-                    print("Error generando el PDF con WeasyPrint")
+
+                #Guardar archivo pdf
+                print("guardar pdf: ", pdf_signed_path)
+                with open(pdf_signed_path, "wb") as pdf_file:
+                    pisa_status = pisa.CreatePDF(BytesIO(html_content.encode('utf-8')), dest=pdf_file)
+                    
+                if pisa_status.err:
+                    print(f"Error al crear el PDF en {pdf_signed_path}")
+                else:
+                    print(f"PDF guardado exitosamente en {pdf_signed_path}")
 
                 return Response({
                     "mensaje": "Factura generada correctamente",
@@ -2157,6 +2260,7 @@ class FirmarFacturaAPIView(APIView):
         intentos_sesion = request.session.get('intentos_reintento', 0)
 
         # Validar certificado
+        print('certificado',CERT_PATH)
         if not os.path.exists(CERT_PATH):
             return Response(
                 {"error": "Certificado no encontrado."},
@@ -2195,9 +2299,9 @@ class FirmarFacturaAPIView(APIView):
 
             try:
                 resp = requests.post(
-                    FIRMADOR_URL,
+                    FIRMADOR_URL.url_endpoint,
                     json=payload,
-                    headers={"Content-Type": "application/json"},
+                    headers={"Content-Type": CONTENT_TYPE.valor},
                     timeout=10
                 )
                 try:
@@ -2286,10 +2390,10 @@ class EnviarFacturaHaciendaAPIView(APIView):
             # Paso 1: Autenticación
             nit = str(emisor_fe.nit)
             pwd = str(emisor_fe.clave_publica)
-            auth_url = "https://api.dtes.mh.gob.sv/seguridad/auth"
+            auth_url = URL_AUTH.url_endpoint
             auth_headers = {
-                "Content-Type": "application/x-www-form-urlencoded",
-                "User-Agent": "MiAplicacionDjango/1.0"
+                "Content-Type": HEADERS.url_endpoint,
+                "User-Agent": HEADERS.valor
             }
             auth_data = {"user": nit, "pwd": pwd}
 
@@ -2375,8 +2479,8 @@ class EnviarFacturaHaciendaAPIView(APIView):
             envio_url = "https://api.dtes.mh.gob.sv/fesv/recepciondte"
             envio_headers = {
                 "Authorization": f"Bearer {token_obj.token}",
-                "User-Agent": "MiAplicacionDjango/1.0",
-                "Content-Type": "application/json"
+                "User-Agent": HEADERS.valor,
+                "Content-Type": CONTENT_TYPE.valor
             }
             payload = {
                 "ambiente": AMBIENTE.codigo,
@@ -2402,9 +2506,10 @@ class EnviarFacturaHaciendaAPIView(APIView):
                         factura.json_original = {**factura.json_original, "jsonRespuestaMh": data}
                         
                         #Enviar correo
-                        if factura.recibido_mh == False:
-                            enviar_correo_individual_view(request, factura_id, None, None)
-                            factura.envio_correo = True
+                        # if factura.recibido_mh == False:
+                        #     enviar_correo_individual_view(request, factura_id, None, None)
+                        #     factura.envio_correo = True
+                        print()
                         factura.save()
                         
                         # Registrar movimiento de inventario
@@ -2573,7 +2678,14 @@ class FacturaPorCodigoGeneracionAPIView(APIView):
                 "telefono": receptor.telefono,
                 "correo": receptor.correo,
             },
-            "productos": productos
+            "productos": productos,
+            "subtotal_neto": factura.sub_total,
+            "total_iva": factura.total_iva,
+            "descuento": factura.total_descuento,
+            "total": factura.total_pagar,
+            "total_con_iva": factura.total_pagar,
+            "saldo_a_favor": factura.saldo_favor,
+            "total_a_pagar": factura.total_pagar
         }
 
         return Response(response_data, status=status.HTTP_200_OK)
@@ -2611,7 +2723,9 @@ class FacturaListAPIView(generics.ListAPIView):
         if recibido and recibido.lower() in ['true', 'false']:
             queryset = queryset.filter(recibido_mh=(recibido.lower() == 'true'))
         if codigo:
-            queryset = queryset.filter(sello_recepcion__icontains=codigo)
+           queryset = queryset.filter(Q(sello_recepcion__icontains=codigo) | Q(numero_control__icontains=codigo) # Busacar por numero de control y sello de recepcion
+        )
+
         if has_codigo and has_codigo.lower() in ['true', 'false']:
             if has_codigo.lower() == 'true':
                 queryset = queryset.exclude(sello_recepcion__isnull=True)
@@ -2646,14 +2760,14 @@ class EnviarFacturaInvalidacionAPIView(APIView):
     @transaction.atomic
     def post(self, request, factura_id, format=None):
         # 1) Autenticación con MH
-        nit = "06142811001040"
-        pwd = "Q#3P9l5&@aF!gT2sA"
-        auth_url = "https://api.dtes.mh.gob.sv/seguridad/auth"
+        nit = emisor_fe.nit
+        pwd = emisor_fe.clave_publica
+        auth_url = URL_AUTH.url_endpoint
         auth_resp = requests.post(auth_url,
                                   data={"user": nit, "pwd": pwd},
                                   headers={
-                                      "Content-Type": "application/x-www-form-urlencoded",
-                                      "User-Agent": "MiAplicacionDjango/1.0"
+                                      "Content-Type": HEADERS.url_endpoint,
+                                      "User-Agent": HEADERS.valor
                                   },
                                   timeout=10)
         try:
@@ -2705,14 +2819,14 @@ class EnviarFacturaInvalidacionAPIView(APIView):
             )
 
         # 4) Envío de invalidación a Hacienda
-        envio_url = "https://api.dtes.mh.gob.sv/fesv/anulardte"
+        envio_url = INVALIDAR_DTE_URL.url_endpoint
         envio_headers = {
             "Authorization": f"Bearer {token}",
-            "User-Agent": "MiAplicacionDjango/1.0",
-            "Content-Type": "application/json"
+            "User-Agent": HEADERS.valor,
+            "Content-Type": CONTENT_TYPE.valor
         }
         payload = {
-            "ambiente": "01",
+            "ambiente": AMBIENTE.codigo,
             "idEnvio": evento.id,
             "version": int(evento.json_invalidacion["identificacion"]["version"]),
             "documento": documento
@@ -3133,7 +3247,7 @@ class ContingenciaDteAPIView(APIView):
             hTransm = datetime.now().strftime('%H:%M:%S')
 
             json_identificacion = {
-                "version": 3,
+                "version": int(VERSION_EVENTO_CONTINGENCIA.valor),
                 "ambiente": str(AMBIENTE.codigo),
                 "codigoGeneracion": str(evento.codigo_generacion).upper(),
                 "fTransmision": fTransm,
@@ -3256,7 +3370,7 @@ class FirmarContingenciaAPIView(APIView):
             }
 
             try:
-                resp = requests.post(FIRMADOR_URL, json=payload, timeout=10)
+                resp = requests.post(FIRMADOR_URL.url_endpoint, json=payload, timeout=10)
                 status_code = resp.status_code
                 try:
                     response_data = resp.json()
@@ -3273,7 +3387,7 @@ class FirmarContingenciaAPIView(APIView):
 
                     # (Opcional) Guardar archivo local
                     os.makedirs(os.path.dirname(CERT_PATH), exist_ok=True)
-                    path = f"FE/json_facturas_firmadas/{evento.codigo_generacion}.json"
+                    path = f"{FACTURAS_FIRMADAS_URL.url}{evento.codigo_generacion}.json"
                     with open(path, "w", encoding="utf-8") as f:
                         json.dump(response_data, f, indent=4, ensure_ascii=False)
 
@@ -3348,10 +3462,10 @@ class EnviarContingenciaHaciendaAPIView(APIView):
 
         nit = str(emisor_fe.nit)
         pwd = str(emisor_fe.clave_publica)
-        auth_url = "https://api.dtes.mh.gob.sv/seguridad/auth"
+        auth_url = URL_AUTH.url_endpoint
         auth_headers = {
-            "Content-Type": "application/x-www-form-urlencoded",
-            "User-Agent": "MiAplicacionDjango/1.0"
+            "Content-Type": HEADERS.url_endpoint,
+            "User-Agent": HEADERS.valor
         }
         auth_data = {"user": nit, "pwd": pwd}
 
@@ -3410,11 +3524,11 @@ class EnviarContingenciaHaciendaAPIView(APIView):
             )
 
         # 2) Envío del DTE firmado
-        envio_url = "https://api.dtes.mh.gob.sv/fesv/contingencia"
+        envio_url = HACIENDA_CONTINGENCIA_URL.url_endpoint
         envio_headers = {
             "Authorization": f"Bearer {token}",
-            "User-Agent": "MiAplicacionDjango/1.0",
-            "Content-Type": "application/json"
+            "User-Agent": HEADERS.valor,
+            "Content-Type": CONTENT_TYPE.valor
         }
         # Preparar documento firmado
         try:
@@ -3838,10 +3952,10 @@ class EnviarLotesHaciendaAPIView(APIView):
         # 2) Autenticación con MH
         nit = str(emisor_fe.nit)
         pwd = str(emisor_fe.clave_publica)
-        auth_url = "https://api.dtes.mh.gob.sv/seguridad/auth"
+        auth_url = URL_AUTH.url_endpoint
         auth_headers = {
-            "Content-Type": "application/x-www-form-urlencoded",
-            "User-Agent": "MiAplicacionDjango/1.0"
+            "Content-Type": HEADERS.url_endpoint,
+            "User-Agent": HEADERS.valor
         }
         auth_data = {"user": nit, "pwd": pwd}
 
@@ -3896,16 +4010,16 @@ class EnviarLotesHaciendaAPIView(APIView):
                 {"error": "El JSON firmado no contiene 'body' con el token"},
                 status=status.HTTP_400_BAD_REQUEST
             )
-
+            
         # 4) Envío a recepciondte
-        envio_url = "https://api.dtes.mh.gob.sv/fesv/recepciondte"
+        envio_url = HACIENDA_URL_PROD
         envio_headers = {
             "Authorization": f"Bearer {token}",
-            "User-Agent": "DjangoApp",
-            "Content-Type": "application/json"
+            "User-Agent": USER_AGENT.valor,
+            "Content-Type": CONTENT_TYPE.valor
         }
         envio_json = {
-            "ambiente": "01",
+            "ambiente": AMBIENTE,
             "idEnvio": factura.id,
             "version": int(factura.json_original["identificacion"]["version"]),
             "tipoDte": str(factura.json_original["identificacion"]["tipoDte"]),
@@ -4075,43 +4189,36 @@ class EnviarCorreoIndividualAPIView(APIView):
         print(f"Inicio envio de correos: pdf: {archivo_pdf}, json: {archivo_json}")
         
         #3.Definir ruta esperada del PDF
-        pdf_signed_path = os.path.join(RUTA_COMPROBANTES_PDF.ruta_archivo, documento_electronico.tipo_dte.codigo, 'pdf', f"{str(documento_electronico.codigo_generacion).upper()}.pdf")
-        
+        print("ruta pdf: ", RUTA_COMPROBANTES_PDF.url)
+        pdf_signed_path = os.path.join(RUTA_COMPROBANTES_PDF.url, documento_electronico.tipo_dte.codigo, 'pdf', f"{str(documento_electronico.codigo_generacion).upper()}.pdf")
+        print("pdf path: ", pdf_signed_path)
         #4.Buscar archivo PDF
         if not os.path.exists(pdf_signed_path):
             print("Pdf no existe", RUTA_COMPROBANTES_PDF)
             
             #1.Crear HTML
             html_content = render_to_string('documentos/factura_consumidor/template_factura.html', {"factura": documento_electronico}, request=request)
-        
-            #2.Definir base_url para que {% static %} funcione correctamente, esto asegura que las imágenes estáticas (logos, etc.) se resuelvan bien en el PDF
-            try:
-                base_url = request.build_absolute_uri('/')
-            except Exception as e:
-                print("Error obteniendo base_url")
-                base_url = None  # WeasyPrint usará paths relativos si es None
-            
-            #3.Preparar lista de CSS:
-            stylesheets = [CSS(url='https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js') ]
-            
-            #4.Guardar archivo PDF con WeasyPrint
-            try:
-                html = HTML(string=html_content, base_url=base_url)
-                html.write_pdf(stylesheets=stylesheets, target=pdf_signed_path)
-            except Exception as e:
-                print("Error generando el PDF con WeasyPrint")
+
+            #Guardar archivo pdf
+            print("guardar pdf: ", pdf_signed_path)
+            with open(pdf_signed_path, "wb") as pdf_file:
+                pisa_status = pisa.CreatePDF(BytesIO(html_content.encode('utf-8')), dest=pdf_file)
+                
+            if pisa_status.err:
+                print(f"Error al crear el PDF en {pdf_signed_path}")
             else:
-                print("No se encontró el archivo PDF para la factura")
+                print(f"PDF guardado exitosamente en {pdf_signed_path}")
+                
         #5.Confirmar ruta del PDF
         archivo_pdf = pdf_signed_path
         
-        #6.Definir ruta esperada del PDF
-        archivo_json = os.path.join(RUTA_COMPROBANTES_JSON.ruta_archivo, f"{documento_electronico.numero_control}.json")
+        #6.Definir ruta esperada del JSON
+        archivo_json = os.path.join(RUTA_JSON_FACTURA.url, f"{documento_electronico.numero_control}.json")
         
         #7.Buscar archivo JSON
         if not os.path.exists(archivo_json):
             print(f"Archivo JSON no encontrado en {archivo_json}")
-            messages.error(request, "Archivo JSON no encontrado.")
+            # messages.error(request, "Archivo JSON no encontrado.")
         print(f"json: {archivo_json} pdf: {archivo_pdf}")
         
         if documento_electronico:
@@ -4130,7 +4237,7 @@ class EnviarCorreoIndividualAPIView(APIView):
             <p>Adjuntamos el documento en formato PDF y JSON para su respaldo.</p>
             <p>Si tiene alguna consulta, estamos a su disposición.</p>
             
-            Consulte el documento electrónico aquí: https://admin.factura.gob.sv/consultaPublica
+            Consulte el documento electrónico aquí: {CONSULTAR_DTE.url_endpoint}
             <BR>
             <BR>
             
@@ -4143,49 +4250,48 @@ class EnviarCorreoIndividualAPIView(APIView):
             email = EmailMessage(
                 subject="Documento Electrónico "+ documento_electronico.tipo_dte.descripcion,
                 body=email_html_content,
-                from_email=settings.EMAIL_HOST_USER_FE,
+                from_email=EMAIL_HOST_FE.valor, #settings.EMAIL_HOST_USER_FE,
                 to=[receptor.correo],
             )
             email.content_subtype = "html"  # Indicar que el contenido es HTML
             
             # Adjuntar archivos
-            try:
-                with open(archivo_pdf, 'rb') as pdf_file:
-                    email.attach(
-                        f"Documento_Electrónico_{receptor.nombre}.pdf",
-                        pdf_file.read(),
-                        'application/pdf'
-                    )
-                with open(archivo_json, 'rb') as json_file:
-                    email.attach(
-                        f"Documento_Electrónico_{receptor.nombre}.json",
-                        json_file.read(),
-                        'application/json'
-                    )
-            except Exception as e:
-                print(f"Error adjuntando archivos: {e}")
-                return Response(
-                {"error": "Error adjuntando archivos:", "detalle": str(e)},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+            # try:
+            #     with open(archivo_pdf, 'rb') as pdf_file:
+            #         email.attach(
+            #             f"Documento_Electrónico_{receptor.nombre}.pdf",
+            #             pdf_file.read(),
+            #             'application/pdf'
+            #         )
+            #     with open(archivo_json, 'rb') as json_file:
+            #         email.attach(
+            #             f"Documento_Electrónico_{receptor.nombre}.json",
+            #             json_file.read(),
+            #             'application/json'
+            #         )
+            # except Exception as e:
+            #     print(f"Error adjuntando archivos: {e}")
+            #     return Response(
+            #     {"error": "Error adjuntando archivos:", "detalle": str(e)},
+            #     status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            # )
             
-            # Enviar el correo
-            try:
-                email.send(fail_silently=False)
-                documento_electronico.envio_correo = True
-                documento_electronico.save()
-                print(f"Correo enviado a {receptor.correo}")
-                return Response(
-                    {"mensaje": f"El correo fue enviado exitosamente a {receptor.correo}"},
-                    status=status.HTTP_200_OK
-                    )
-            except Exception as e:
-                documento_electronico.envio_correo = False
-                documento_electronico.save()
-                print(f"Error al enviar el correo a {receptor.correo}: {e}")
-                return Response(
-                    {"error": "Error al enviar el correo", "detalle": str(e)},
-                    status=status.HTTP_502_BAD_GATEWAY
-                )
+            # # Enviar el correo
+            # try:
+            #     email.send(fail_silently=False)
+            #     documento_electronico.envio_correo = True
+            #     documento_electronico.save()
+            #     print(f"Correo enviado a {receptor.correo}")
+            #     return Response(
+            #         {"mensaje": f"El correo fue enviado exitosamente a {receptor.correo}"},
+            #         status=status.HTTP_200_OK
+            #         )
+            # except Exception as e:
+            #     documento_electronico.envio_correo = False
+            #     documento_electronico.save()
+            #     print(f"Error al enviar el correo a {receptor.correo}: {e}")
+            #     return Response(
+            #         {"error": "Error al enviar el correo", "detalle": str(e)},
+            #         status=status.HTTP_502_BAD_GATEWAY
+            #     )
     #return redirect('detalle_factura', factura_id=factura_id)
-    
